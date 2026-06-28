@@ -26,10 +26,8 @@ COMPARISON_DISPLAY_COLS = [
 ]
 
 MONTHLY_DISPLAY_COLS = [
-    "decision_month",
     "decision_date",
     "selected_tickers",
-    "score_col",
     "avg_score",
     "portfolio_future_return_1m",
     "portfolio_future_max_return_1_3m",
@@ -77,6 +75,7 @@ def fmt_num(x) -> str:
 def to_md(df: pd.DataFrame) -> str:
     if df.empty:
         return "_No data available. Run `python run_all.py` first._"
+
     return df.to_markdown(index=False)
 
 
@@ -296,14 +295,6 @@ def panel_audit_sections(panel_summary: pd.DataFrame, panel_by_month: pd.DataFra
     else:
         parts.append("### Full panel summary")
         parts.append(to_md(panel_summary))
-
-    if panel_by_month.empty:
-        parts.append("### Recent monthly panel coverage")
-        parts.append("_No monthly panel coverage output available._")
-    else:
-        recent = panel_by_month.tail(18).copy()
-        parts.append("### Recent monthly panel coverage")
-        parts.append(to_md(recent))
 
     parts.append(
         "The complete row-level panel is saved to `outputs/momentum_acceleration_panel.csv` "
