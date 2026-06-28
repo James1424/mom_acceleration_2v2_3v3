@@ -1,9 +1,13 @@
-name: Momentum Acceleration Backtest
+name: Monthly Momentum Acceleration Update
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 8 * * 0"
+    # GitHub cron cannot express "first trading day" directly.
+    # This runs after the US market close on weekdays during days 1-7;
+    # src/should_run_monthly_update.py then allows only the first NYSE
+    # trading day of the month to perform the update.
+    - cron: "30 22 1-7 * 1-5"
 
 permissions:
   contents: write
@@ -18,9 +22,19 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run full backtest
+      - name: Check first trading day
+        id: monthly_check
+        run: python -m src.should_run_monthly_update
+      - name: Show monthly update decision
+        run: |
+          echo "Today: ${{ steps.monthly_check.outputs.today }}"
+          echo "First trading day: ${{ steps.monthly_check.outputs.first_trading_day }}"
+          echo "Should run: ${{ steps.monthly_check.outputs.should_run }}"
+      - name: Run full backtest and latest recommendations
+        if: github.event_name == 'workflow_dispatch' || steps.monthly_check.outputs.should_run == 'true'
         run: python run_all.py
       - name: Upload large outputs
+        if: github.event_name == 'workflow_dispatch' || steps.monthly_check.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: momentum-acceleration-outputs
@@ -29,9 +43,10 @@ jobs:
             data/*.csv.gz
             outputs/*.csv
       - name: Commit README and compact outputs
+        if: github.event_name == 'workflow_dispatch' || steps.monthly_check.outputs.should_run == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md outputs/strategy_summary.csv outputs/monthly_strategy_returns.csv outputs/monthly_selected_tickers.csv data/seed_universe.csv data/holding_source_failures.csv data/download_failures.csv || true
-          git commit -m "Update momentum acceleration backtest" || echo "No changes to commit"
+          git add README.md outputs/strategy_summary.csv outputs/strategy_comparison.csv outputs/monthly_strategy_returns.csv outputs/monthly_selected_tickers.csv data/seed_universe.csv data/holding_source_failures.csv data/download_failures.csv || true
+          git commit -m "Update monthly momentum acceleration recommendations" || echo "No changes to commit"
           git push || true
