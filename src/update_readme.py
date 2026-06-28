@@ -337,6 +337,18 @@ This section uses the latest available signal month in `outputs/momentum_acceler
 
 {latest_top3_sections(latest_panel, selections)}
 
+## Monthly auto-update
+
+This project is configured to update automatically on the **first NYSE trading day of each month** after the US market close. The GitHub Actions workflow runs on weekdays during calendar days 1-7 and uses `src/should_run_monthly_update.py` to allow the full update only when that day is the first NYSE trading day of the month.
+
+On an eligible monthly update, the workflow runs `python run_all.py`, rebuilds the universe and price panel, recomputes all strategy results, and refreshes this README. Therefore the **Latest month Top-3 selections by strategy** section above is automatically updated to the newest available decision month and becomes the current month's Top-3 buy suggestion for every strategy.
+
+Manual updates are also supported through GitHub Actions `workflow_dispatch`, or locally with:
+
+```bash
+python run_all.py
+```
+
 This project tests whether **momentum acceleration** adds useful ranking power beyond raw momentum. It is intentionally independent from XGBoost: no model, no labels, no probability ranking.
 
 ## Research question
