@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+data/daily_prices.csv.gz
+data/seed_universe.csv
+data/seed_universe_sources_long.csv
+data/download_failures.csv
+outputs/*.csv
