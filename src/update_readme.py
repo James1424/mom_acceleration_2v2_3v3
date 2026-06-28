@@ -26,6 +26,7 @@ COMPARISON_DISPLAY_COLS = [
 ]
 
 MONTHLY_DISPLAY_COLS = [
+    "decision_month",
     "decision_date",
     "selected_tickers",
     "avg_score",
@@ -57,6 +58,21 @@ FAMILY_TITLES = {
 }
 
 
+def effective_report_end_month() -> str:
+    """Return the configured report end month, or previous calendar month if automatic."""
+    if REPORT_END_MONTH not in (None, "", "auto", "AUTO"):
+        return str(REPORT_END_MONTH)
+    return str(pd.Timestamp.today().to_period("M") - 1)
+
+
+def month_range_df(start_month: str, end_month: str) -> pd.DataFrame:
+    start = pd.Period(start_month, freq="M")
+    end = pd.Period(end_month, freq="M")
+    if end < start:
+        return pd.DataFrame({"decision_month": []})
+    return pd.DataFrame({"decision_month": [str(m) for m in pd.period_range(start, end, freq="M")]})
+
+
 def fmt_pct(x) -> str:
     if pd.isna(x):
         return ""
@@ -75,7 +91,6 @@ def fmt_num(x) -> str:
 def to_md(df: pd.DataFrame) -> str:
     if df.empty:
         return "_No data available. Run `python run_all.py` first._"
-
     return df.to_markdown(index=False)
 
 
@@ -109,6 +124,7 @@ def compact_monthly_table(monthly: pd.DataFrame) -> pd.DataFrame:
 
 
 def strategy_sort_key(strategy: str) -> tuple:
+    strategy = str(strategy)
     if strategy.startswith("A_"):
         return (0, strategy)
     if strategy.startswith("Pure_"):
@@ -120,9 +136,14 @@ def strategy_sort_key(strategy: str) -> tuple:
     return (9, strategy)
 
 
-def monthly_returns_sections(period: pd.DataFrame) -> str:
+def monthly_returns_sections(period: pd.DataFrame, report_start_month: str, report_end_month: str) -> str:
+    """Build monthly return tables, keeping missing months as blank rows."""
     if period.empty:
         return "_No monthly strategy returns available for this window. Run `python run_all.py` first._"
+
+    months = month_range_df(report_start_month, report_end_month)
+    if months.empty:
+        return "_No monthly strategy returns available for this window._"
 
     parts: list[str] = []
     for family in FAMILY_ORDER:
@@ -133,8 +154,14 @@ def monthly_returns_sections(period: pd.DataFrame) -> str:
         strategies = sorted(fdf["strategy"].dropna().unique().tolist(), key=strategy_sort_key)
         for strategy in strategies:
             sdf = fdf[fdf["strategy"] == strategy].copy()
+            sdf = sdf.sort_values("decision_month") if "decision_month" in sdf.columns else sdf
             parts.append(f"#### `{strategy}`")
-            show = compact_monthly_table(sdf)
+
+            # Keep every month in the requested rolling window. Months that are not yet
+            # available in outputs/monthly_strategy_returns.csv are displayed as blank rows
+            # and will be filled automatically after future runs generate those returns.
+            show = months.merge(sdf, on="decision_month", how="left")
+            show = compact_monthly_table(show)
             show = format_percent_cols(show)
             parts.append(to_md(show))
     if not parts:
@@ -159,16 +186,8 @@ def _date_only(x) -> str:
 
 
 def latest_top3_sections(panel: pd.DataFrame, fallback_selections: pd.DataFrame | None = None) -> str:
-    """Show current/latest signal-month Top-3 selections, not just evaluated months.
-
-    `monthly_selected_tickers.csv` only contains months with known forward 1M/2M/3M
-    returns, so it naturally lags by about three months. For the README's latest
-    selection block we instead use `momentum_acceleration_panel.csv`, which has
-    the latest available first-trading-day signal month even when future returns
-    are not known yet.
-    """
+    """Show current/latest signal-month Top-3 selections, not just evaluated months."""
     if panel.empty:
-        # Backward-compatible fallback for old output folders.
         selections = fallback_selections if fallback_selections is not None else pd.DataFrame()
         if selections.empty or "decision_month" not in selections.columns or "strategy" not in selections.columns:
             return "_No latest selections available. Run `python run_all.py` first._"
@@ -224,7 +243,6 @@ def latest_top3_sections(panel: pd.DataFrame, fallback_selections: pd.DataFrame 
                 row[f"top{i}"] = r.get("ticker", "")
             rows.append(row)
 
-        # Strategy A.
         if "momentum_6m" in latest.columns:
             mdf = latest.dropna(subset=["momentum_6m"]).copy()
             if not mdf.empty:
@@ -236,12 +254,10 @@ def latest_top3_sections(panel: pd.DataFrame, fallback_selections: pd.DataFrame 
             if feature not in latest.columns:
                 continue
 
-            # Pure acceleration.
             mdf = latest.dropna(subset=[feature]).copy()
             if not mdf.empty:
                 add_row(f"Pure_{label}_top{TOP_N}", "Pure_acceleration", select_top_n(mdf, feature))
 
-            # Strategy B.
             if "momentum_6m" in latest.columns:
                 mdf = latest.dropna(subset=["momentum_6m", feature]).copy()
                 if not mdf.empty:
@@ -252,7 +268,6 @@ def latest_top3_sections(panel: pd.DataFrame, fallback_selections: pd.DataFrame 
                         select_top_n(momentum_pool, feature),
                     )
 
-            # Strategy C.
             if "momentum_6m" in latest.columns:
                 mdf = latest.dropna(subset=["momentum_6m", feature]).copy()
                 if not mdf.empty:
@@ -320,13 +335,15 @@ def main() -> None:
     panel_summary = pd.read_csv(panel_summary_file) if panel_summary_file.exists() else pd.DataFrame()
     panel_by_month = pd.read_csv(panel_by_month_file) if panel_by_month_file.exists() else pd.DataFrame()
 
+    report_end_month = effective_report_end_month()
+
     show_comparison = compact_comparison_table(comparison)
     show_comparison = format_percent_cols(show_comparison) if not show_comparison.empty else show_comparison
 
     if not monthly.empty:
         period = monthly[
-            (monthly["decision_month"] >= REPORT_START_MONTH)
-            & (monthly["decision_month"] <= REPORT_END_MONTH)
+            (monthly["decision_month"].astype(str) >= REPORT_START_MONTH)
+            & (monthly["decision_month"].astype(str) <= report_end_month)
         ].copy()
     else:
         period = pd.DataFrame()
@@ -447,7 +464,7 @@ Compared with `accel_3v3_6m`, this feature reacts faster to a recent strengtheni
 - Universe: ETF/index panel universe based on the same source idea as `James1424/XGB_tail_boom_4000`: QQQ, SPY, growth ETFs, semiconductor/AI ETFs, software/cloud ETFs, biotech, clean energy, innovation/high-beta ETFs, plus a manual high-interest ticker list.
 - Decision time: the **first trading day of each month**.
 - Backtest period: from **2016-01** to the latest month available in downloaded prices.
-- README detailed monthly result window: **{REPORT_START_MONTH} to {REPORT_END_MONTH}**.
+- README detailed monthly result window: **{REPORT_START_MONTH} to {report_end_month}**.
 - Portfolio construction: equal-weight Top-{TOP_N} stocks for every strategy/month.
 - Main forward evaluation targets:
   - `future_return_1m`: return from this month’s first trading day to next month’s first trading day.
@@ -570,11 +587,11 @@ This module is for checking whether the monthly panel has the expected number of
 
 {to_md(show_comparison)}
 
-## Monthly strategy returns: {REPORT_START_MONTH} to {REPORT_END_MONTH}
+## Monthly strategy returns: {REPORT_START_MONTH} to {report_end_month}
 
-This section shows the requested backtest window, grouped by strategy family. For Pure acceleration, Strategy B, and Strategy C, each individual strategy has its own table. Full monthly history remains in `outputs/monthly_strategy_returns.csv`.
+This section shows the requested backtest window, grouped by strategy family. Missing months are kept as blank rows and will be filled automatically after future updates generate the required forward-return data. Full monthly history remains in `outputs/monthly_strategy_returns.csv`.
 
-{monthly_returns_sections(period)}
+{monthly_returns_sections(period, REPORT_START_MONTH, report_end_month)}
 
 ## Interpretation
 
