@@ -17,9 +17,15 @@ FILTER_TOP_N = 10
 ACCEL_LOOKBACK_MONTHS = [3, 4, 5, 6]
 MOMENTUM_LOOKBACK_MONTHS = [3, 4, 5, 6]
 BASE_MOMENTUM_MONTHS = 6
+
+# Strategy C uses:
+# score = z(momentum_6m) + COMBINED_ACCEL_WEIGHT * z(acceleration_feature)
 COMBINED_ACCEL_WEIGHT = 0.3
+
 DOWNLOAD_CHUNK_SIZE = 80
 DOWNLOAD_SLEEP_SECONDS = 1.0
 
+# README monthly strategy return window.
+# REPORT_END_MONTH = None means: automatically use the previous calendar month.
 REPORT_START_MONTH = "2025-01"
 REPORT_END_MONTH = None

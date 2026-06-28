@@ -26,7 +26,6 @@ COMPARISON_DISPLAY_COLS = [
 ]
 
 MONTHLY_DISPLAY_COLS = [
-    "decision_month",
     "decision_date",
     "selected_tickers",
     "avg_score",
