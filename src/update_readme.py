@@ -13,14 +13,49 @@ from .config import (
 
 README_FILE = PROJECT_ROOT / "README.md"
 
-README_HIDE_COLS = ["family", "accel_method", "accel_feature", "accel_lookback_months"]
-FAMILY_LABELS = {
+COMPARISON_DISPLAY_COLS = [
+    "strategy",
+    "months",
+    "avg_future_return_1m",
+    "win_rate_1m",
+    "avg_future_max_return_1_3m",
+    "hit_rate_positive_max_1_3m",
+    "cumulative_return_1m_rebalanced",
+    "max_drawdown_1m_rebalanced",
+]
+
+MONTHLY_DISPLAY_COLS = [
+    "decision_month",
+    "decision_date",
+    "selected_tickers",
+    "score_col",
+    "avg_score",
+    "portfolio_future_return_1m",
+    "portfolio_future_max_return_1_3m",
+    "top1_ticker",
+    "top1_future_return_1m",
+    "top1_future_max_return_1_3m",
+    "top2_ticker",
+    "top2_future_return_1m",
+    "top2_future_max_return_1_3m",
+    "top3_ticker",
+    "top3_future_return_1m",
+    "top3_future_max_return_1_3m",
+]
+
+FAMILY_ORDER = [
+    "A_original_6m_momentum",
+    "Pure_acceleration",
+    "B_6m_momentum_filter_then_acceleration",
+    "C_combined_score",
+]
+
+FAMILY_TITLES = {
     "A_original_6m_momentum": "Strategy A: original six-month average momentum",
     "Pure_acceleration": "Pure acceleration strategies",
     "B_6m_momentum_filter_then_acceleration": "Strategy B: six-month momentum plus acceleration filter",
     "C_combined_score": "Strategy C: combined momentum and acceleration score",
 }
-FAMILY_ORDER = list(FAMILY_LABELS.keys())
 
 
 def fmt_pct(x) -> str:
@@ -44,12 +79,6 @@ def to_md(df: pd.DataFrame) -> str:
     return df.to_markdown(index=False)
 
 
-def remove_readme_metadata_cols(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-    return df.drop(columns=[c for c in README_HIDE_COLS if c in df.columns], errors="ignore")
-
-
 def format_percent_cols(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     pct_keywords = ["return", "rate", "drawdown", "best_month", "worst_month"]
@@ -62,85 +91,131 @@ def format_percent_cols(df: pd.DataFrame) -> pd.DataFrame:
         if not pd.api.types.is_numeric_dtype(out[c]):
             continue
         if "score" in c or "momentum" in c or "accel" in c:
-            out[c] = out[c].map(fmt_num)
+            if c not in {"accel_lookback_months"}:
+                out[c] = out[c].map(fmt_num)
     return out
+
+
+def compact_comparison_table(comparison: pd.DataFrame) -> pd.DataFrame:
+    if comparison.empty:
+        return comparison
+    return comparison[[c for c in COMPARISON_DISPLAY_COLS if c in comparison.columns]].copy()
 
 
 def compact_monthly_table(monthly: pd.DataFrame) -> pd.DataFrame:
     if monthly.empty:
         return monthly
-    cols = [
-        "decision_month", "strategy", "selected_tickers",
-        "portfolio_future_return_1m", "portfolio_future_max_return_1_3m",
-        "top1_ticker", "top1_future_return_1m", "top1_future_max_return_1_3m",
-        "top2_ticker", "top2_future_return_1m", "top2_future_max_return_1_3m",
-        "top3_ticker", "top3_future_return_1m", "top3_future_max_return_1_3m",
-    ]
-    return monthly[[c for c in cols if c in monthly.columns]].copy()
+    return monthly[[c for c in MONTHLY_DISPLAY_COLS if c in monthly.columns]].copy()
 
 
-def monthly_tables_by_strategy_family(period_raw: pd.DataFrame) -> str:
-    if period_raw.empty:
-        return "_No data available. Run `python run_all.py` first._"
+def strategy_sort_key(strategy: str) -> tuple:
+    if strategy.startswith("A_"):
+        return (0, strategy)
+    if strategy.startswith("Pure_"):
+        return (1, strategy)
+    if strategy.startswith("B_"):
+        return (2, strategy)
+    if strategy.startswith("C_"):
+        return (3, strategy)
+    return (9, strategy)
 
-    sections = []
-    remaining = period_raw.copy()
+
+def monthly_returns_sections(period: pd.DataFrame) -> str:
+    if period.empty:
+        return "_No monthly strategy returns available for this window. Run `python run_all.py` first._"
+
+    parts: list[str] = []
     for family in FAMILY_ORDER:
-        if "family" not in remaining.columns:
-            break
-        part = remaining[remaining["family"] == family].copy()
-        if part.empty:
+        fdf = period[period["family"] == family].copy() if "family" in period.columns else pd.DataFrame()
+        if fdf.empty:
             continue
-        table = compact_monthly_table(part)
-        table = format_percent_cols(table)
-        sections.append(f"### {FAMILY_LABELS[family]}\n\n{to_md(table)}")
+        parts.append(f"### {FAMILY_TITLES[family]}")
+        strategies = sorted(fdf["strategy"].dropna().unique().tolist(), key=strategy_sort_key)
+        for strategy in strategies:
+            sdf = fdf[fdf["strategy"] == strategy].copy()
+            parts.append(f"#### `{strategy}`")
+            show = compact_monthly_table(sdf)
+            show = format_percent_cols(show)
+            parts.append(to_md(show))
+    if not parts:
+        return "_No monthly strategy returns available for this window. Run `python run_all.py` first._"
+    return "\n\n".join(parts)
 
-    if not sections:
-        table = compact_monthly_table(period_raw)
-        table = format_percent_cols(table)
-        sections.append(to_md(table))
-    return "\n\n".join(sections)
+
+def latest_top3_sections(selections: pd.DataFrame) -> str:
+    if selections.empty:
+        return "_No latest selections available. Run `python run_all.py` first._"
+    if "decision_month" not in selections.columns or "strategy" not in selections.columns:
+        return "_No latest selections available. Run `python run_all.py` first._"
+
+    latest_month = selections["decision_month"].max()
+    latest = selections[selections["decision_month"] == latest_month].copy()
+    if latest.empty:
+        return "_No latest selections available. Run `python run_all.py` first._"
+
+    rows = []
+    family_map = latest.groupby("strategy")["family"].first().to_dict() if "family" in latest.columns else {}
+    score_map = latest.groupby("strategy")["score_col"].first().to_dict() if "score_col" in latest.columns else {}
+    date_map = latest.groupby("strategy")["decision_date"].first().to_dict() if "decision_date" in latest.columns else {}
+
+    for strategy, g in latest.sort_values(["strategy", "rank"]).groupby("strategy"):
+        g = g.sort_values("rank")
+        row = {
+            "strategy": strategy,
+            "decision_month": latest_month,
+            "decision_date": date_map.get(strategy, ""),
+            "score_col": score_map.get(strategy, ""),
+            "top1": "",
+            "top2": "",
+            "top3": "",
+        }
+        for _, r in g.iterrows():
+            rank = int(r.get("rank", 0)) if not pd.isna(r.get("rank", None)) else 0
+            if rank in {1, 2, 3}:
+                row[f"top{rank}"] = r.get("ticker", "")
+        row["family"] = family_map.get(strategy, "")
+        rows.append(row)
+
+    latest_wide = pd.DataFrame(rows)
+    if latest_wide.empty:
+        return "_No latest selections available. Run `python run_all.py` first._"
+
+    parts: list[str] = []
+    for family in FAMILY_ORDER:
+        fdf = latest_wide[latest_wide["family"] == family].copy() if "family" in latest_wide.columns else pd.DataFrame()
+        if fdf.empty:
+            continue
+        fdf = fdf.sort_values("strategy", key=lambda s: s.map(strategy_sort_key))
+        show_cols = ["strategy", "decision_month", "decision_date", "score_col", "top1", "top2", "top3"]
+        parts.append(f"### {FAMILY_TITLES[family]}")
+        parts.append(to_md(fdf[[c for c in show_cols if c in fdf.columns]]))
+
+    if not parts:
+        latest_wide = latest_wide.sort_values("strategy", key=lambda s: s.map(strategy_sort_key))
+        show_cols = ["strategy", "decision_month", "decision_date", "score_col", "top1", "top2", "top3"]
+        return to_md(latest_wide[[c for c in show_cols if c in latest_wide.columns]])
+    return "\n\n".join(parts)
 
 
 def main() -> None:
-    summary_file = OUTPUT_DIR / "strategy_summary.csv"
     comparison_file = OUTPUT_DIR / "strategy_comparison.csv"
     monthly_file = OUTPUT_DIR / "monthly_strategy_returns.csv"
     selection_file = OUTPUT_DIR / "monthly_selected_tickers.csv"
 
-    summary = pd.read_csv(summary_file) if summary_file.exists() else pd.DataFrame()
     comparison = pd.read_csv(comparison_file) if comparison_file.exists() else pd.DataFrame()
     monthly = pd.read_csv(monthly_file) if monthly_file.exists() else pd.DataFrame()
     selections = pd.read_csv(selection_file) if selection_file.exists() else pd.DataFrame()
 
-    if not comparison.empty:
-        show_comparison = remove_readme_metadata_cols(comparison)
-        show_comparison = format_percent_cols(show_comparison)
-    else:
-        show_comparison = comparison
+    show_comparison = compact_comparison_table(comparison)
+    show_comparison = format_percent_cols(show_comparison) if not show_comparison.empty else show_comparison
 
     if not monthly.empty:
-        period_raw = monthly[
+        period = monthly[
             (monthly["decision_month"] >= REPORT_START_MONTH)
             & (monthly["decision_month"] <= REPORT_END_MONTH)
         ].copy()
-        period_tables = monthly_tables_by_strategy_family(period_raw)
     else:
-        period_tables = "_No data available. Run `python run_all.py` first._"
-
-    if not selections.empty:
-        period_sel = selections[
-            (selections["decision_month"] >= REPORT_START_MONTH)
-            & (selections["decision_month"] <= REPORT_END_MONTH)
-        ].copy()
-        # Keep this compact in README; full expanded selections remain in CSV.
-        period_sel = period_sel[[c for c in [
-            "decision_month", "strategy", "rank", "ticker", "score_col", "score",
-            "future_return_1m", "future_max_return_1_3m",
-        ] if c in period_sel.columns]].head(300)
-        period_sel = format_percent_cols(period_sel)
-    else:
-        period_sel = pd.DataFrame()
+        period = pd.DataFrame()
 
     specs = acceleration_feature_specs()
     feature_rows = "\n".join(
@@ -304,7 +379,7 @@ This strategy asks whether momentum and acceleration should be blended into one 
 
 ## Summary metrics
 
-`outputs/strategy_summary.csv` and `outputs/strategy_comparison.csv` include the full metric set. The README only displays the compact comparison table below.
+`outputs/strategy_summary.csv` and `outputs/strategy_comparison.csv` include:
 
 | Metric | Meaning |
 |---|---|
@@ -314,7 +389,10 @@ This strategy asks whether momentum and acceleration should be blended into one 
 | `cumulative_return_1m_rebalanced` | Cumulative monthly-rebalanced return using `future_return_1m`. |
 | `max_drawdown_1m_rebalanced` | Max drawdown of the monthly-rebalanced 1M equity curve. |
 | `avg_future_max_return_1_3m` | Average equal-weight Top-{TOP_N} max return across forward 1M/2M/3M horizons. |
+| `median_future_max_return_1_3m` | Median of the forward 1M/2M/3M max-return metric. |
 | `hit_rate_positive_max_1_3m` | Fraction of months where the forward max 1–3M return is positive. |
+| `best_month_1m` | Best monthly equal-weight Top-{TOP_N} 1M return. |
+| `worst_month_1m` | Worst monthly equal-weight Top-{TOP_N} 1M return. |
 
 ## Run
 
@@ -351,17 +429,15 @@ python -m src.update_readme
 
 ## Monthly strategy returns: {REPORT_START_MONTH} to {REPORT_END_MONTH}
 
-This section shows the requested backtest window, not only 2026-03. Full monthly history remains in `outputs/monthly_strategy_returns.csv`.
+This section shows the requested backtest window, grouped by strategy family. For Pure acceleration, Strategy B, and Strategy C, each individual strategy has its own table. Full monthly history remains in `outputs/monthly_strategy_returns.csv`.
 
-The README splits this window into separate tables by strategy type. Metadata columns such as `family`, `accel_method`, `accel_feature`, and `accel_lookback_months` are intentionally hidden here to keep the display readable.
+{monthly_returns_sections(period)}
 
-{period_tables}
+## Latest month Top-3 selections by strategy
 
-## Expanded selected tickers sample: {REPORT_START_MONTH} to {REPORT_END_MONTH}
+This section uses the latest available `decision_month` in `outputs/monthly_selected_tickers.csv` and shows which Top-{TOP_N} tickers each strategy would select.
 
-This is capped at the first 300 rows to keep the README readable. Full selections are in `outputs/monthly_selected_tickers.csv`.
-
-{to_md(period_sel)}
+{latest_top3_sections(selections)}
 
 ## Interpretation
 

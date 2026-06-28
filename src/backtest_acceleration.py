@@ -373,9 +373,14 @@ def build_comparison_table(summary: pd.DataFrame) -> pd.DataFrame:
     if summary.empty:
         return summary
     cols = [
-        "strategy", "family", "accel_method", "accel_feature", "accel_lookback_months", "months",
-        "avg_future_return_1m", "cumulative_return_1m_rebalanced", "max_drawdown_1m_rebalanced",
-        "avg_future_max_return_1_3m", "win_rate_1m", "hit_rate_positive_max_1_3m",
+        "strategy",
+        "months",
+        "avg_future_return_1m",
+        "win_rate_1m",
+        "avg_future_max_return_1_3m",
+        "hit_rate_positive_max_1_3m",
+        "cumulative_return_1m_rebalanced",
+        "max_drawdown_1m_rebalanced",
     ]
     comp = summary[[c for c in cols if c in summary.columns]].copy()
     return comp.sort_values("avg_future_return_1m", ascending=False)
