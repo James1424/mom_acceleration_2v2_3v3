@@ -13,6 +13,15 @@ from .config import (
 
 README_FILE = PROJECT_ROOT / "README.md"
 
+README_HIDE_COLS = ["family", "accel_method", "accel_feature", "accel_lookback_months"]
+FAMILY_LABELS = {
+    "A_original_6m_momentum": "Strategy A: original six-month average momentum",
+    "Pure_acceleration": "Pure acceleration strategies",
+    "B_6m_momentum_filter_then_acceleration": "Strategy B: six-month momentum plus acceleration filter",
+    "C_combined_score": "Strategy C: combined momentum and acceleration score",
+}
+FAMILY_ORDER = list(FAMILY_LABELS.keys())
+
 
 def fmt_pct(x) -> str:
     if pd.isna(x):
@@ -35,6 +44,12 @@ def to_md(df: pd.DataFrame) -> str:
     return df.to_markdown(index=False)
 
 
+def remove_readme_metadata_cols(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    return df.drop(columns=[c for c in README_HIDE_COLS if c in df.columns], errors="ignore")
+
+
 def format_percent_cols(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     pct_keywords = ["return", "rate", "drawdown", "best_month", "worst_month"]
@@ -47,8 +62,7 @@ def format_percent_cols(df: pd.DataFrame) -> pd.DataFrame:
         if not pd.api.types.is_numeric_dtype(out[c]):
             continue
         if "score" in c or "momentum" in c or "accel" in c:
-            if c not in {"accel_lookback_months"}:
-                out[c] = out[c].map(fmt_num)
+            out[c] = out[c].map(fmt_num)
     return out
 
 
@@ -56,13 +70,36 @@ def compact_monthly_table(monthly: pd.DataFrame) -> pd.DataFrame:
     if monthly.empty:
         return monthly
     cols = [
-        "decision_month", "strategy", "family", "accel_method", "accel_feature", "selected_tickers",
+        "decision_month", "strategy", "selected_tickers",
         "portfolio_future_return_1m", "portfolio_future_max_return_1_3m",
         "top1_ticker", "top1_future_return_1m", "top1_future_max_return_1_3m",
         "top2_ticker", "top2_future_return_1m", "top2_future_max_return_1_3m",
         "top3_ticker", "top3_future_return_1m", "top3_future_max_return_1_3m",
     ]
     return monthly[[c for c in cols if c in monthly.columns]].copy()
+
+
+def monthly_tables_by_strategy_family(period_raw: pd.DataFrame) -> str:
+    if period_raw.empty:
+        return "_No data available. Run `python run_all.py` first._"
+
+    sections = []
+    remaining = period_raw.copy()
+    for family in FAMILY_ORDER:
+        if "family" not in remaining.columns:
+            break
+        part = remaining[remaining["family"] == family].copy()
+        if part.empty:
+            continue
+        table = compact_monthly_table(part)
+        table = format_percent_cols(table)
+        sections.append(f"### {FAMILY_LABELS[family]}\n\n{to_md(table)}")
+
+    if not sections:
+        table = compact_monthly_table(period_raw)
+        table = format_percent_cols(table)
+        sections.append(to_md(table))
+    return "\n\n".join(sections)
 
 
 def main() -> None:
@@ -76,18 +113,20 @@ def main() -> None:
     monthly = pd.read_csv(monthly_file) if monthly_file.exists() else pd.DataFrame()
     selections = pd.read_csv(selection_file) if selection_file.exists() else pd.DataFrame()
 
-    show_summary = format_percent_cols(summary) if not summary.empty else summary
-    show_comparison = format_percent_cols(comparison) if not comparison.empty else comparison
+    if not comparison.empty:
+        show_comparison = remove_readme_metadata_cols(comparison)
+        show_comparison = format_percent_cols(show_comparison)
+    else:
+        show_comparison = comparison
 
     if not monthly.empty:
-        period = monthly[
+        period_raw = monthly[
             (monthly["decision_month"] >= REPORT_START_MONTH)
             & (monthly["decision_month"] <= REPORT_END_MONTH)
         ].copy()
-        period = compact_monthly_table(period)
-        period = format_percent_cols(period)
+        period_tables = monthly_tables_by_strategy_family(period_raw)
     else:
-        period = pd.DataFrame()
+        period_tables = "_No data available. Run `python run_all.py` first._"
 
     if not selections.empty:
         period_sel = selections[
@@ -265,7 +304,7 @@ This strategy asks whether momentum and acceleration should be blended into one 
 
 ## Summary metrics
 
-`outputs/strategy_summary.csv` and `outputs/strategy_comparison.csv` include:
+`outputs/strategy_summary.csv` and `outputs/strategy_comparison.csv` include the full metric set. The README only displays the compact comparison table below.
 
 | Metric | Meaning |
 |---|---|
@@ -275,10 +314,7 @@ This strategy asks whether momentum and acceleration should be blended into one 
 | `cumulative_return_1m_rebalanced` | Cumulative monthly-rebalanced return using `future_return_1m`. |
 | `max_drawdown_1m_rebalanced` | Max drawdown of the monthly-rebalanced 1M equity curve. |
 | `avg_future_max_return_1_3m` | Average equal-weight Top-{TOP_N} max return across forward 1M/2M/3M horizons. |
-| `median_future_max_return_1_3m` | Median of the forward 1M/2M/3M max-return metric. |
 | `hit_rate_positive_max_1_3m` | Fraction of months where the forward max 1–3M return is positive. |
-| `best_month_1m` | Best monthly equal-weight Top-{TOP_N} 1M return. |
-| `worst_month_1m` | Worst monthly equal-weight Top-{TOP_N} 1M return. |
 
 ## Run
 
@@ -306,22 +342,20 @@ python -m src.update_readme
 | `outputs/momentum_acceleration_panel.csv` | Momentum, acceleration features, and forward-return panel |
 | `outputs/monthly_strategy_returns.csv` | Monthly Top-{TOP_N} portfolio returns for every strategy |
 | `outputs/monthly_selected_tickers.csv` | Selected tickers by strategy/month/rank |
-| `outputs/strategy_summary.csv` | Summary metrics by strategy |
+| `outputs/strategy_summary.csv` | Full summary metrics by strategy |
 | `outputs/strategy_comparison.csv` | Compact comparison table sorted by average future 1M return |
 
 ## Strategy comparison
 
 {to_md(show_comparison)}
 
-## Strategy summary
-
-{to_md(show_summary)}
-
 ## Monthly strategy returns: {REPORT_START_MONTH} to {REPORT_END_MONTH}
 
-This section replaces the old single-latest-month view. It shows the requested backtest window, not only 2026-03. Full monthly history remains in `outputs/monthly_strategy_returns.csv`.
+This section shows the requested backtest window, not only 2026-03. Full monthly history remains in `outputs/monthly_strategy_returns.csv`.
 
-{to_md(period)}
+The README splits this window into separate tables by strategy type. Metadata columns such as `family`, `accel_method`, `accel_feature`, and `accel_lookback_months` are intentionally hidden here to keep the display readable.
+
+{period_tables}
 
 ## Expanded selected tickers sample: {REPORT_START_MONTH} to {REPORT_END_MONTH}
 
