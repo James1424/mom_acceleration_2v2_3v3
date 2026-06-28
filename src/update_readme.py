@@ -1,7 +1,8 @@
 import pandas as pd
 
-from .backtest_acceleration import acceleration_feature_specs
+from .backtest_acceleration import acceleration_feature_specs, select_top_n
 from .config import (
+    BACKTEST_START,
     COMBINED_ACCEL_WEIGHT,
     FILTER_TOP_N,
     OUTPUT_DIR,
@@ -142,58 +143,149 @@ def monthly_returns_sections(period: pd.DataFrame) -> str:
     return "\n\n".join(parts)
 
 
-def latest_top3_sections(selections: pd.DataFrame) -> str:
-    if selections.empty:
-        return "_No latest selections available. Run `python run_all.py` first._"
-    if "decision_month" not in selections.columns or "strategy" not in selections.columns:
-        return "_No latest selections available. Run `python run_all.py` first._"
+def _zscore(s: pd.Series) -> pd.Series:
+    std = s.std(ddof=0)
+    if pd.isna(std) or std == 0:
+        return pd.Series(0.0, index=s.index)
+    return (s - s.mean()) / std
 
-    latest_month = selections["decision_month"].max()
-    latest = selections[selections["decision_month"] == latest_month].copy()
-    if latest.empty:
-        return "_No latest selections available. Run `python run_all.py` first._"
 
-    rows = []
-    family_map = latest.groupby("strategy")["family"].first().to_dict() if "family" in latest.columns else {}
-    score_map = latest.groupby("strategy")["score_col"].first().to_dict() if "score_col" in latest.columns else {}
-    date_map = latest.groupby("strategy")["decision_date"].first().to_dict() if "decision_date" in latest.columns else {}
+def _date_only(x) -> str:
+    if pd.isna(x):
+        return ""
+    try:
+        return pd.to_datetime(x).date().isoformat()
+    except Exception:
+        return str(x)
 
-    for strategy, g in latest.sort_values(["strategy", "rank"]).groupby("strategy"):
-        g = g.sort_values("rank")
-        row = {
-            "strategy": strategy,
-            "decision_month": latest_month,
-            "decision_date": date_map.get(strategy, ""),
-            "score_col": score_map.get(strategy, ""),
-            "top1": "",
-            "top2": "",
-            "top3": "",
-        }
-        for _, r in g.iterrows():
-            rank = int(r.get("rank", 0)) if not pd.isna(r.get("rank", None)) else 0
-            if rank in {1, 2, 3}:
-                row[f"top{rank}"] = r.get("ticker", "")
-        row["family"] = family_map.get(strategy, "")
-        rows.append(row)
 
-    latest_wide = pd.DataFrame(rows)
+def latest_top3_sections(panel: pd.DataFrame, fallback_selections: pd.DataFrame | None = None) -> str:
+    """Show current/latest signal-month Top-3 selections, not just evaluated months.
+
+    `monthly_selected_tickers.csv` only contains months with known forward 1M/2M/3M
+    returns, so it naturally lags by about three months. For the README's latest
+    selection block we instead use `momentum_acceleration_panel.csv`, which has
+    the latest available first-trading-day signal month even when future returns
+    are not known yet.
+    """
+    if panel.empty:
+        # Backward-compatible fallback for old output folders.
+        selections = fallback_selections if fallback_selections is not None else pd.DataFrame()
+        if selections.empty or "decision_month" not in selections.columns or "strategy" not in selections.columns:
+            return "_No latest selections available. Run `python run_all.py` first._"
+        latest_month = selections["decision_month"].max()
+        latest = selections[selections["decision_month"] == latest_month].copy()
+        if latest.empty:
+            return "_No latest selections available. Run `python run_all.py` first._"
+        rows = []
+        family_map = latest.groupby("strategy")["family"].first().to_dict() if "family" in latest.columns else {}
+        date_map = latest.groupby("strategy")["decision_date"].first().to_dict() if "decision_date" in latest.columns else {}
+        for strategy, g in latest.sort_values(["strategy", "rank"]).groupby("strategy"):
+            g = g.sort_values("rank")
+            row = {"strategy": strategy, "decision_date": date_map.get(strategy, ""), "top1": "", "top2": "", "top3": "", "family": family_map.get(strategy, "")}
+            for _, r in g.iterrows():
+                rank = int(r.get("rank", 0)) if not pd.isna(r.get("rank", None)) else 0
+                if rank in {1, 2, 3}:
+                    row[f"top{rank}"] = r.get("ticker", "")
+            rows.append(row)
+        latest_wide = pd.DataFrame(rows)
+        latest_label = str(latest_month)
+    else:
+        p = panel.copy()
+        if "month" not in p.columns or "ticker" not in p.columns:
+            return "_No latest selections available. Run `python run_all.py` first._"
+        p["month_period"] = pd.PeriodIndex(p["month"].astype(str), freq="M")
+        p = p[p["month_period"] >= pd.Period(BACKTEST_START, freq="M")].copy()
+        specs = acceleration_feature_specs()
+        needed_any = ["momentum_6m"] + [s["feature"] for s in specs]
+        existing_needed = [c for c in needed_any if c in p.columns]
+        if not existing_needed:
+            return "_No latest selections available. Run `python run_all.py` first._"
+        valid_months = p.groupby("month_period")[existing_needed].apply(lambda x: x.notna().any().any())
+        valid_months = valid_months[valid_months]
+        if valid_months.empty:
+            return "_No latest selections available. Run `python run_all.py` first._"
+        latest_period = valid_months.index.max()
+        latest = p[p["month_period"] == latest_period].copy()
+        latest_label = str(latest_period)
+        rows: list[dict] = []
+
+        def add_row(strategy: str, family: str, ranked: pd.DataFrame):
+            if ranked.empty:
+                return
+            row = {
+                "strategy": strategy,
+                "decision_date": _date_only(ranked["first_trade_date"].min()) if "first_trade_date" in ranked.columns else "",
+                "top1": "",
+                "top2": "",
+                "top3": "",
+                "family": family,
+            }
+            for i, (_, r) in enumerate(ranked.head(TOP_N).iterrows(), start=1):
+                row[f"top{i}"] = r.get("ticker", "")
+            rows.append(row)
+
+        # Strategy A.
+        if "momentum_6m" in latest.columns:
+            mdf = latest.dropna(subset=["momentum_6m"]).copy()
+            if not mdf.empty:
+                add_row(f"A_momentum_6m_top{TOP_N}", "A_original_6m_momentum", select_top_n(mdf, "momentum_6m"))
+
+        for spec in specs:
+            feature = spec["feature"]
+            label = spec["label"]
+            if feature not in latest.columns:
+                continue
+
+            # Pure acceleration.
+            mdf = latest.dropna(subset=[feature]).copy()
+            if not mdf.empty:
+                add_row(f"Pure_{label}_top{TOP_N}", "Pure_acceleration", select_top_n(mdf, feature))
+
+            # Strategy B.
+            if "momentum_6m" in latest.columns:
+                mdf = latest.dropna(subset=["momentum_6m", feature]).copy()
+                if not mdf.empty:
+                    momentum_pool = select_top_n(mdf, "momentum_6m", top_n=FILTER_TOP_N)
+                    add_row(
+                        f"B_mom6m_top{FILTER_TOP_N}_then_{label}_top{TOP_N}",
+                        "B_6m_momentum_filter_then_acceleration",
+                        select_top_n(momentum_pool, feature),
+                    )
+
+            # Strategy C.
+            if "momentum_6m" in latest.columns:
+                mdf = latest.dropna(subset=["momentum_6m", feature]).copy()
+                if not mdf.empty:
+                    combo_col = f"combined_score_{feature}"
+                    mdf["z_momentum_6m"] = _zscore(mdf["momentum_6m"])
+                    mdf[f"z_{feature}"] = _zscore(mdf[feature])
+                    mdf[combo_col] = mdf["z_momentum_6m"] + COMBINED_ACCEL_WEIGHT * mdf[f"z_{feature}"]
+                    add_row(
+                        f"C_z_mom6m_plus_{COMBINED_ACCEL_WEIGHT:g}_z_{label}_top{TOP_N}",
+                        "C_combined_score",
+                        select_top_n(mdf, combo_col),
+                    )
+
+        latest_wide = pd.DataFrame(rows)
+
     if latest_wide.empty:
         return "_No latest selections available. Run `python run_all.py` first._"
 
-    parts: list[str] = []
+    parts: list[str] = [f"Latest available decision month: **{latest_label}**."]
     for family in FAMILY_ORDER:
         fdf = latest_wide[latest_wide["family"] == family].copy() if "family" in latest_wide.columns else pd.DataFrame()
         if fdf.empty:
             continue
-        fdf = fdf.sort_values("strategy", key=lambda s: s.map(strategy_sort_key))
-        show_cols = ["strategy", "decision_month", "decision_date", "score_col", "top1", "top2", "top3"]
+        fdf = fdf.sort_values("strategy", key=lambda col: col.map(strategy_sort_key))
+        show_cols = ["strategy", "decision_date", "top1", "top2", "top3"]
         parts.append(f"### {FAMILY_TITLES[family]}")
         parts.append(to_md(fdf[[c for c in show_cols if c in fdf.columns]]))
 
-    if not parts:
-        latest_wide = latest_wide.sort_values("strategy", key=lambda s: s.map(strategy_sort_key))
-        show_cols = ["strategy", "decision_month", "decision_date", "score_col", "top1", "top2", "top3"]
-        return to_md(latest_wide[[c for c in show_cols if c in latest_wide.columns]])
+    if len(parts) == 1:
+        latest_wide = latest_wide.sort_values("strategy", key=lambda col: col.map(strategy_sort_key))
+        show_cols = ["strategy", "decision_date", "top1", "top2", "top3"]
+        parts.append(to_md(latest_wide[[c for c in show_cols if c in latest_wide.columns]]))
     return "\n\n".join(parts)
 
 
@@ -201,10 +293,12 @@ def main() -> None:
     comparison_file = OUTPUT_DIR / "strategy_comparison.csv"
     monthly_file = OUTPUT_DIR / "monthly_strategy_returns.csv"
     selection_file = OUTPUT_DIR / "monthly_selected_tickers.csv"
+    panel_file = OUTPUT_DIR / "momentum_acceleration_panel.csv"
 
     comparison = pd.read_csv(comparison_file) if comparison_file.exists() else pd.DataFrame()
     monthly = pd.read_csv(monthly_file) if monthly_file.exists() else pd.DataFrame()
     selections = pd.read_csv(selection_file) if selection_file.exists() else pd.DataFrame()
+    latest_panel = pd.read_csv(panel_file) if panel_file.exists() else pd.DataFrame()
 
     show_comparison = compact_comparison_table(comparison)
     show_comparison = format_percent_cols(show_comparison) if not show_comparison.empty else show_comparison
@@ -236,6 +330,12 @@ def main() -> None:
     )
 
     text = f"""# Momentum Acceleration Ablation Backtest
+
+## Latest month Top-3 selections by strategy
+
+This section uses the latest available signal month in `outputs/momentum_acceleration_panel.csv`, so it can show the current month even when future 1M/2M/3M returns are not known yet.
+
+{latest_top3_sections(latest_panel, selections)}
 
 This project tests whether **momentum acceleration** adds useful ranking power beyond raw momentum. It is intentionally independent from XGBoost: no model, no labels, no probability ranking.
 
@@ -432,12 +532,6 @@ python -m src.update_readme
 This section shows the requested backtest window, grouped by strategy family. For Pure acceleration, Strategy B, and Strategy C, each individual strategy has its own table. Full monthly history remains in `outputs/monthly_strategy_returns.csv`.
 
 {monthly_returns_sections(period)}
-
-## Latest month Top-3 selections by strategy
-
-This section uses the latest available `decision_month` in `outputs/monthly_selected_tickers.csv` and shows which Top-{TOP_N} tickers each strategy would select.
-
-{latest_top3_sections(selections)}
 
 ## Interpretation
 
