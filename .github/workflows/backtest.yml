@@ -1,0 +1,37 @@
+name: Momentum Acceleration Backtest
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 0"
+
+permissions:
+  contents: write
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run full backtest
+        run: python run_all.py
+      - name: Upload large outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: momentum-acceleration-outputs
+          path: |
+            data/*.csv
+            data/*.csv.gz
+            outputs/*.csv
+      - name: Commit README and compact outputs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md outputs/strategy_summary.csv outputs/monthly_strategy_returns.csv outputs/monthly_selected_tickers.csv data/seed_universe.csv data/holding_source_failures.csv data/download_failures.csv || true
+          git commit -m "Update momentum acceleration backtest" || echo "No changes to commit"
+          git push || true
