@@ -386,6 +386,69 @@ def build_comparison_table(summary: pd.DataFrame) -> pd.DataFrame:
     return comp.sort_values("avg_future_return_1m", ascending=False)
 
 
+def build_panel_audit_outputs(panel: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Create compact audit tables for checking the full monthly panel.
+
+    The complete panel is saved separately as `momentum_acceleration_panel.csv`.
+    These summaries make it easier to verify row counts, month coverage, ticker
+    coverage, feature availability, and forward-return availability.
+    """
+    p = panel.copy()
+    if p.empty:
+        summary = pd.DataFrame([{
+            "panel_rows": 0,
+            "unique_tickers": 0,
+            "unique_months": 0,
+            "first_panel_month": "",
+            "last_panel_month": "",
+            "first_trade_date_min": "",
+            "first_trade_date_max": "",
+            "backtest_evaluable_rows": 0,
+            "backtest_evaluable_months": 0,
+            "backtest_evaluable_tickers": 0,
+        }])
+        return summary, pd.DataFrame()
+
+    p["month_str"] = p["month"].astype(str)
+    evaluable = p.dropna(subset=["future_return_1m", "future_max_return_1_3m"]).copy()
+    signal_cols = [
+        "momentum_3m", "momentum_4m", "momentum_5m", "momentum_6m",
+        "avg_accel_3m", "avg_accel_4m", "avg_accel_5m", "avg_accel_6m",
+        "accel_3v3_6m", "accel_2v2_4m",
+    ]
+    signal_cols = [c for c in signal_cols if c in p.columns]
+
+    summary = pd.DataFrame([{
+        "panel_rows": int(len(p)),
+        "unique_tickers": int(p["ticker"].nunique()),
+        "unique_months": int(p["month_str"].nunique()),
+        "first_panel_month": p["month_str"].min(),
+        "last_panel_month": p["month_str"].max(),
+        "first_trade_date_min": pd.to_datetime(p["first_trade_date"]).min().date().isoformat() if "first_trade_date" in p.columns else "",
+        "first_trade_date_max": pd.to_datetime(p["first_trade_date"]).max().date().isoformat() if "first_trade_date" in p.columns else "",
+        "backtest_evaluable_rows": int(len(evaluable)),
+        "backtest_evaluable_months": int(evaluable["month_str"].nunique()) if not evaluable.empty else 0,
+        "backtest_evaluable_tickers": int(evaluable["ticker"].nunique()) if not evaluable.empty else 0,
+    }])
+
+    rows = []
+    for month, g in p.groupby("month_str"):
+        row = {
+            "month": month,
+            "rows": int(len(g)),
+            "unique_tickers": int(g["ticker"].nunique()),
+            "first_trade_date_min": pd.to_datetime(g["first_trade_date"]).min().date().isoformat() if "first_trade_date" in g.columns else "",
+            "first_trade_date_max": pd.to_datetime(g["first_trade_date"]).max().date().isoformat() if "first_trade_date" in g.columns else "",
+            "has_future_return_1m_rows": int(g["future_return_1m"].notna().sum()) if "future_return_1m" in g.columns else 0,
+            "has_future_max_return_1_3m_rows": int(g["future_max_return_1_3m"].notna().sum()) if "future_max_return_1_3m" in g.columns else 0,
+        }
+        for c in signal_cols:
+            row[f"has_{c}_rows"] = int(g[c].notna().sum())
+        rows.append(row)
+    by_month = pd.DataFrame(rows).sort_values("month")
+    return summary, by_month
+
+
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     daily = pd.read_csv(DAILY_PRICES_FILE)
@@ -394,8 +457,15 @@ def main() -> None:
     panel = add_forward_returns(signal_panel)
     monthly, selections, summary, comparison = run_backtest(panel)
 
+    panel_summary, panel_by_month = build_panel_audit_outputs(panel)
+
     firsts.to_csv(OUTPUT_DIR / "first_trading_day_prices.csv", index=False)
     panel.to_csv(OUTPUT_DIR / "momentum_acceleration_panel.csv", index=False)
+    panel.to_csv(OUTPUT_DIR / "full_panel.csv", index=False)
+    panel.head(500).to_csv(OUTPUT_DIR / "panel_head_500.csv", index=False)
+    panel.tail(500).to_csv(OUTPUT_DIR / "panel_tail_500.csv", index=False)
+    panel_summary.to_csv(OUTPUT_DIR / "panel_summary.csv", index=False)
+    panel_by_month.to_csv(OUTPUT_DIR / "panel_by_month_summary.csv", index=False)
     monthly.to_csv(OUTPUT_DIR / "monthly_strategy_returns.csv", index=False)
     selections.to_csv(OUTPUT_DIR / "monthly_selected_tickers.csv", index=False)
     summary.to_csv(OUTPUT_DIR / "strategy_summary.csv", index=False)

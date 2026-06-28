@@ -289,16 +289,45 @@ def latest_top3_sections(panel: pd.DataFrame, fallback_selections: pd.DataFrame 
     return "\n\n".join(parts)
 
 
+def panel_audit_sections(panel_summary: pd.DataFrame, panel_by_month: pd.DataFrame) -> str:
+    parts: list[str] = []
+    if panel_summary.empty:
+        parts.append("_No panel audit output available. Run `python run_all.py` first._")
+    else:
+        parts.append("### Full panel summary")
+        parts.append(to_md(panel_summary))
+
+    if panel_by_month.empty:
+        parts.append("### Recent monthly panel coverage")
+        parts.append("_No monthly panel coverage output available._")
+    else:
+        recent = panel_by_month.tail(18).copy()
+        parts.append("### Recent monthly panel coverage")
+        parts.append(to_md(recent))
+
+    parts.append(
+        "The complete row-level panel is saved to `outputs/momentum_acceleration_panel.csv` "
+        "and duplicated as `outputs/full_panel.csv` for easy inspection. The first and "
+        "last 500 rows are saved to `outputs/panel_head_500.csv` and "
+        "`outputs/panel_tail_500.csv`."
+    )
+    return "\n\n".join(parts)
+
+
 def main() -> None:
     comparison_file = OUTPUT_DIR / "strategy_comparison.csv"
     monthly_file = OUTPUT_DIR / "monthly_strategy_returns.csv"
     selection_file = OUTPUT_DIR / "monthly_selected_tickers.csv"
     panel_file = OUTPUT_DIR / "momentum_acceleration_panel.csv"
+    panel_summary_file = OUTPUT_DIR / "panel_summary.csv"
+    panel_by_month_file = OUTPUT_DIR / "panel_by_month_summary.csv"
 
     comparison = pd.read_csv(comparison_file) if comparison_file.exists() else pd.DataFrame()
     monthly = pd.read_csv(monthly_file) if monthly_file.exists() else pd.DataFrame()
     selections = pd.read_csv(selection_file) if selection_file.exists() else pd.DataFrame()
     latest_panel = pd.read_csv(panel_file) if panel_file.exists() else pd.DataFrame()
+    panel_summary = pd.read_csv(panel_summary_file) if panel_summary_file.exists() else pd.DataFrame()
+    panel_by_month = pd.read_csv(panel_by_month_file) if panel_by_month_file.exists() else pd.DataFrame()
 
     show_comparison = compact_comparison_table(comparison)
     show_comparison = format_percent_cols(show_comparison) if not show_comparison.empty else show_comparison
@@ -529,11 +558,22 @@ python -m src.update_readme
 | `data/seed_universe.csv` | Selected universe and source metadata |
 | `data/daily_prices.csv.gz` | yfinance adjusted daily prices |
 | `outputs/first_trading_day_prices.csv` | First-trading-day price panel |
-| `outputs/momentum_acceleration_panel.csv` | Momentum, acceleration features, and forward-return panel |
+| `outputs/momentum_acceleration_panel.csv` | Complete momentum, acceleration feature, and forward-return panel |
+| `outputs/full_panel.csv` | Duplicate complete panel for direct inspection |
+| `outputs/panel_summary.csv` | Full panel row/month/ticker/evaluable coverage summary |
+| `outputs/panel_by_month_summary.csv` | Month-by-month panel coverage and non-null feature counts |
+| `outputs/panel_head_500.csv` | First 500 panel rows for quick inspection |
+| `outputs/panel_tail_500.csv` | Last 500 panel rows for quick inspection |
 | `outputs/monthly_strategy_returns.csv` | Monthly Top-{TOP_N} portfolio returns for every strategy |
 | `outputs/monthly_selected_tickers.csv` | Selected tickers by strategy/month/rank |
 | `outputs/strategy_summary.csv` | Full summary metrics by strategy |
 | `outputs/strategy_comparison.csv` | Compact comparison table sorted by average future 1M return |
+
+## Panel construction and audit
+
+This module is for checking whether the monthly panel has the expected number of rows, ticker coverage, month coverage, signal availability, and forward-return availability.
+
+{panel_audit_sections(panel_summary, panel_by_month)}
 
 ## Strategy comparison
 
