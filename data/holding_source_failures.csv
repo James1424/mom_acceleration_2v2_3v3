@@ -1,4 +1,5 @@
 source,category,method
+QQQ,core_growth,wikipedia_nasdaq100_fallback
 IVV,large_cap_core,unavailable
 VOO,large_cap_core,unavailable
 VUG,large_cap_growth,unavailable
