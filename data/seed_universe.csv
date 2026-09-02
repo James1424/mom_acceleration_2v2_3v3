@@ -94,7 +94,6 @@ APTV,1,3.0,1,SPY,large_cap_core,1,0
 ARE,1,3.0,1,SPY,large_cap_core,1,0
 ARES,1,3.0,1,SPY,large_cap_core,1,0
 ATO,1,3.0,1,SPY,large_cap_core,1,0
-AVB,1,3.0,1,SPY,large_cap_core,1,0
 AVY,1,3.0,1,SPY,large_cap_core,1,0
 AWK,1,3.0,1,SPY,large_cap_core,1,0
 AXON,1,3.0,1,SPY,large_cap_core,1,0
@@ -195,7 +194,6 @@ DUK,1,3.0,1,SPY,large_cap_core,1,0
 DVA,1,3.0,1,SPY,large_cap_core,1,0
 DVN,1,3.0,1,SPY,large_cap_core,1,0
 DXCM,1,3.0,1,SPY,large_cap_core,1,0
-EA,1,3.0,1,SPY,large_cap_core,1,0
 EBAY,1,3.0,1,SPY,large_cap_core,1,0
 ECHO,1,3.0,1,SPY,large_cap_core,1,0
 ECL,1,3.0,1,SPY,large_cap_core,1,0
@@ -210,7 +208,6 @@ EMR,1,3.0,1,SPY,large_cap_core,1,0
 ENPH,1,3.0,1,manual,manual_core,0,1
 EOG,1,3.0,1,SPY,large_cap_core,1,0
 EQIX,1,3.0,1,SPY,large_cap_core,1,0
-EQR,1,3.0,1,SPY,large_cap_core,1,0
 EQT,1,3.0,1,SPY,large_cap_core,1,0
 ERIE,1,3.0,1,SPY,large_cap_core,1,0
 ES,1,3.0,1,SPY,large_cap_core,1,0
@@ -232,6 +229,7 @@ FDS,1,3.0,1,SPY,large_cap_core,1,0
 FDX,1,3.0,1,SPY,large_cap_core,1,0
 FDXF,1,3.0,1,SPY,large_cap_core,1,0
 FE,1,3.0,1,SPY,large_cap_core,1,0
+FERG,1,3.0,1,SPY,large_cap_core,1,0
 FFIV,1,3.0,1,SPY,large_cap_core,1,0
 FICO,1,3.0,1,SPY,large_cap_core,1,0
 FIS,1,3.0,1,SPY,large_cap_core,1,0
@@ -416,6 +414,7 @@ PYPL,1,3.0,1,SPY,large_cap_core,1,0
 Q,1,3.0,1,SPY,large_cap_core,1,0
 QCOM,1,3.0,1,SPY,large_cap_core,1,0
 RCL,1,3.0,1,SPY,large_cap_core,1,0
+RDDT,1,3.0,1,SPY,large_cap_core,1,0
 REG,1,3.0,1,SPY,large_cap_core,1,0
 REGN,1,3.0,1,SPY,large_cap_core,1,0
 RF,1,3.0,1,SPY,large_cap_core,1,0
@@ -498,6 +497,7 @@ VICI,1,3.0,1,SPY,large_cap_core,1,0
 VLO,1,3.0,1,SPY,large_cap_core,1,0
 VLTO,1,3.0,1,SPY,large_cap_core,1,0
 VMC,1,3.0,1,SPY,large_cap_core,1,0
+VMRK,1,3.0,1,SPY,large_cap_core,1,0
 VRSK,1,3.0,1,SPY,large_cap_core,1,0
 VRSN,1,3.0,1,SPY,large_cap_core,1,0
 VRTX,1,3.0,1,SPY,large_cap_core,1,0
